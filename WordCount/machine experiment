@@ -1,0 +1,173 @@
+import pandas as pd
+import numpy as np
+import time
+from matplotlib import pyplot as plt
+import matplotlib.image as mpimg
+import os
+from keras.utils.np_utils  import to_categorical
+from keras.models import Sequential
+from keras.layers.core import Dense ,Dropout, Flatten
+from keras.callbacks import EarlyStopping
+from keras.layers import Conv2D,SeparableConv2D
+from keras.optimizers import Adam
+from sklearn.model_selection import train_test_split
+
+import tensorflow as tf
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+config = tf.ConfigProto(allow_soft_placement = True)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.5)
+config.gpu_options.allow_growth = True
+ 
+sess0 = tf.InteractiveSession(config = config)
+
+path_1=r'C:\Users\22167\Desktop\Machine Learnning Datasets\Diagram_Train_CNN'
+file1=os.listdir(path_1)
+labels = [os.path.join(path_1,i) for i in file1]
+
+#由于图片数量大，采用批量加载
+image_routes=[]#存储训练集的图片路径
+image_labels=[]#存储对应的标签
+for i in range(len(labels)):
+    for filename in os.listdir(labels[i]):      
+        image_routes.append(os.path.join(labels[i], filename))
+        image_labels.append(i)
+n_classes = len(set(labels)) #得到图片类别数量
+image_labels = to_categorical(image_labels, n_classes)  #进行独热编码
+
+#构建一个批量加载生成器
+
+def batchgen(image_routes_train,batch_size,image_size_rows,image_size_cols):#建立批量加载图片的生成器
+    batch_images = np.zeros((batch_size,image_size_rows,image_size_cols,4))#储存加载的图片数字矩阵
+    batch_labels = np.zeros((batch_size,len(labels)))#储存每个类别
+    i=0
+    while True:
+        n=0
+        while n<batch_size:  #定义每一个批次加载的图片的数量
+            #i=np.random.randint(len(image_routes_train))
+            if(i>=len(image_routes_train)):
+                i=0
+            img =mpimg.imread(image_routes_train[i])
+            img=np.array(img)
+            batch_images[n]=img
+            batch_labels[n]=image_labels_train[i]
+            n=n+1
+            i=i+1
+        yield batch_images, batch_labels #返回训练集的生成器  
+        
+        ### 定义训练集，测试集合和其他超参数
+image_routes_train,image_routes_test,image_labels_train,image_labels_test = train_test_split(image_routes,image_labels,test_size=0.3)
+
+input_shape = (190,400,4)
+batch_size = 8
+n_epochs =4
+
+steps_per_epoch=round(len(image_routes_train)/batch_size) #定义内一个e_pochs训练多少个批次
+validation_steps=round(len(image_routes_test)/batch_size) #定义每一次测试，测试多少个批次
+
+train_generator = batchgen(image_routes_train,batch_size,190,400)
+val_generator = batchgen(image_routes_test,batch_size,190,400)
+
+
+callbacks = [EarlyStopping(monitor='val_accuracy', patience=5)]
+
+#使用fit_generator进行训练model_batch
+model_batch = Sequential()
+
+model_batch.add(Conv2D(16, kernel_size=(4,4), activation = 'relu', input_shape=input_shape))
+model_batch.add(Conv2D(32, kernel_size=(4,4), activation='relu' ))
+
+
+model_batch.add(Flatten())  #卷积层链接全连接层需要展平
+
+model_batch.add(Dense(16, activation='relu'))
+
+model_batch.add(Dense(n_classes, activation='softmax'))
+
+opt = Adam()
+model_batch.compile(loss='categorical_crossentropy',optimizer=opt, metrics=['accuracy'])
+
+#训练model_batch并记录用时
+strat_time=time.time()
+model_batch.fit_generator(train_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs)#,validation_data=val_generator,validation_steps=validation_steps, callbacks=callbacks)
+end_time=time.time()
+print(end_time-strat_time)
+
+#加载保存好的model_batch的参数
+from keras.models import load_model
+model_batch.load_weights(r'C:\Users\22167\Desktop\Machine learning Train model\model_batch.h5')
+
+
+#定义model_Separable的结构
+model_Separable = Sequential()
+
+model_Separable.add(SeparableConv2D(16, kernel_size=(4,4), activation = 'relu', input_shape=input_shape))
+model_Separable.add(SeparableConv2D(32, kernel_size=(4,4), activation='relu' ))
+
+
+model_Separable.add(Flatten())  #卷积层链接全连接层需要展平
+
+model_Separable.add(Dense(16, activation='relu'))
+
+model_Separable.add(Dense(n_classes, activation='softmax'))
+
+opt = Adam()
+model_Separable.compile(loss='categorical_crossentropy',optimizer=opt, metrics=['accuracy'])
+
+#训练model_Separable并记录时间
+start_time=time.time()
+model_Separable.fit_generator(train_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs)#,validation_data=val_generator,validation_steps=validation_steps, callbacks=callbacks)
+end_time=time.time()
+print(end_time-start_time)
+
+#理论上来说，在输入图片格式为（190,40014)的条件下，使用4*4的卷积核，使用普通卷积得到训练准确率为92.73%，使用深度分离卷积的准确率为92.27%。
+#但是。深度分离卷积的预测一张图片的时间仅为普通卷积的6.7%，(深度分离卷积第一层的计算次数为5006284次乘法，普通卷积为75423744次乘法)。同时，深度分离卷积
+#的参数只有普通卷积的7.8%，在参数数量，和时间效率上，深度分离卷积都优于普通卷积，但是准确率只下降了0.46%。
+
+#加载保存好的model_Separable的参数
+model_Separable.load_weights(r'C:\Users\22167\Desktop\Machine learning Train model\model_Separable.h5')
+
+model=[]
+model.append(model_batch)
+model.append(model_Separable)
+
+
+    #使用测试集对model_Separable进行测试
+    predict_accuracy=[]#由于测试集太大，将测试集合分成数量相同三部分，记录每一部分的准确率，最后除以平均。
+    predict_labels=[]
+    start_time=time.time()
+    for k in range(10):
+        image_test=[]
+        labels_test=[]
+        for i in range(k*500,(k+1)*500,1):
+            img =mpimg.imread(image_routes_test[i])
+            img=np.array(img)
+            image_test.append(img)
+            labels_test.append(image_labels_test[i])
+        image_test=np.array(image_test)
+        labels_test=np.array(labels_test)
+        predict_accuracy.append(model[1].evaluate(image_test,labels_test)[1])
+        predict_labels.append(model[1].predict_classes(np.array(image_test))) 
+        
+        ### 对比预测1000个样本，Conv2D和SeparableConv2D的差异，多次实验，时间大概稳定减少了0.35s左右
+image_test=[]
+labels_test=[]
+for i in range(0,1000,1):
+    img =mpimg.imread(image_routes_test[i])
+    img=np.array(img)
+    image_test.append(img)
+    labels_test.append(image_labels_test[i])
+image_test=np.array(image_test)
+labels_test=np.array(labels_test)
+start_time=time.time()
+model[0].predict(image_test)
+end_time=time.time()
+print(end_time-start_time)
+
+start_time=time.time()
+model[1].predict(image_test)
+end_time=time.time()
+print(end_time-start_time)
+#查看Conv2D和Separable的参数，可以看到在卷积部分，Conv2D的参数规模大概是Separable_Conv2D的10倍
+print(model_batch.summary())
+print(model_Separable.summary())
+    
